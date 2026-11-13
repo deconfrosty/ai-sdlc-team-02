@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { decodeJwt } from "jose";
 import {
   createSessionToken,
   revokeSessionToken,
@@ -8,6 +9,7 @@ import {
 import {
   authenticatorDB,
   authChallengeDB,
+  authSessionDB,
   closeDatabase,
   userDB,
 } from "../lib/db";
@@ -36,6 +38,7 @@ test("registers, persists, adds a second passkey, signs in, and logs out", async
   const username = `auth-${Date.now()}`;
   await page.goto("/login");
   await page.getByLabel("Username").fill(username);
+  const registrationStarted = Date.now() / 1000;
   await page.getByRole("button", { name: "Create account with passkey" }).click();
   await expect(page.getByRole("heading", { name: `Welcome, ${username}` })).toBeVisible();
 
@@ -50,9 +53,48 @@ test("registers, persists, adds a second passkey, signs in, and logs out", async
   }
   expect(sessionCookie?.httpOnly).toBe(true);
   expect(sessionCookie?.sameSite).toBe("Lax");
-  const expectedExpiry = Date.now() / 1000 + 7 * 24 * 60 * 60;
-  expect(sessionCookie?.expires).toBeGreaterThan(expectedExpiry - 5);
-  expect(sessionCookie?.expires).toBeLessThan(expectedExpiry + 5);
+  const { iat, exp } = decodeJwt(copiedSessionToken);
+  if (iat === undefined || exp === undefined) {
+    throw new Error("Session token does not have issue and expiry times");
+  }
+  expect(exp - iat).toBe(7 * 24 * 60 * 60);
+  expect(sessionCookie?.expires).toBeGreaterThanOrEqual(
+    registrationStarted + 7 * 24 * 60 * 60 - 1,
+  );
+  expect(sessionCookie?.expires).toBeLessThanOrEqual(
+    Date.now() / 1000 + 7 * 24 * 60 * 60 + 1,
+  );
+
+  const foreignRegistration = await page.request.post(
+    "/api/auth/register-options",
+    { data: { username: `${username}-other` } },
+  );
+  expect(foreignRegistration.status()).toBe(403);
+
+  const loginOptions = await page.request.post("/api/auth/login-options", {
+    data: { username },
+  });
+  expect(loginOptions.status()).toBe(200);
+  const { challengeId } = (await loginOptions.json()) as { challengeId: string };
+  const invalidAssertion = {
+    id: "unknown-credential",
+    rawId: "unknown-credential",
+    type: "public-key",
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: "e30",
+      authenticatorData: "AA",
+      signature: "AA",
+    },
+  };
+  const unknownCredential = await page.request.post("/api/auth/login-verify", {
+    data: { username, challengeId, response: invalidAssertion },
+  });
+  expect(unknownCredential.status()).toBe(401);
+  const replay = await page.request.post("/api/auth/login-verify", {
+    data: { username, challengeId, response: invalidAssertion },
+  });
+  expect(replay.status()).toBe(401);
 
   await page.reload();
   await expect(page.getByRole("heading", { name: `Welcome, ${username}` })).toBeVisible();
@@ -145,6 +187,24 @@ test("registers, persists, adds a second passkey, signs in, and logs out", async
   await cdp.send("WebAuthn.disable");
 });
 
+test("auth endpoints reject malformed requests", async ({ request }) => {
+  for (const route of ["register-options", "login-options", "register-verify", "login-verify"]) {
+    const malformed = await request.post(`/api/auth/${route}`, {
+      headers: { "content-type": "application/json" },
+      data: "{",
+    });
+    expect(malformed.status()).toBe(400);
+    const invalid = await request.post(`/api/auth/${route}`, { data: {} });
+    expect(invalid.status()).toBe(400);
+  }
+  for (const username of ["", " ".repeat(2), "x".repeat(65), 42]) {
+    const result = await request.post("/api/auth/register-options", {
+      data: { username },
+    });
+    expect(result.status()).toBe(400);
+  }
+});
+
 test("session tokens are signed, revocable, tamper-resistant, and expire", async () => {
   const user = { id: 12, username: "session-user" };
   const token = await createSessionToken(user);
@@ -161,6 +221,19 @@ test("session tokens are signed, revocable, tamper-resistant, and expire", async
   });
   expect(await verifySessionToken(`${token}tampered`)).toBeNull();
   expect(await verifySessionToken(await createSessionToken(user, -1))).toBeNull();
+});
+
+test("revocation storage errors are surfaced instead of accepting a token", async () => {
+  const token = await createSessionToken({ id: 12, username: "session-user" });
+  const original = authSessionDB.isRevoked;
+  authSessionDB.isRevoked = () => {
+    throw new Error("revocation store unavailable");
+  };
+  try {
+    await expect(verifySessionToken(token)).rejects.toThrow("revocation store unavailable");
+  } finally {
+    authSessionDB.isRevoked = original;
+  }
 });
 
 test("challenges expire and can only be consumed once", () => {

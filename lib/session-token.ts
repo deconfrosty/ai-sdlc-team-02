@@ -44,8 +44,9 @@ interface VerifiedSessionPayload {
 async function getVerifiedSessionPayload(
   token: string,
 ): Promise<VerifiedSessionPayload | null> {
+  const secret = getSessionSecret();
   try {
-    const { payload } = await jwtVerify(token, getSessionSecret(), {
+    const { payload } = await jwtVerify(token, secret, {
       algorithms: ["HS256"],
     });
     const userId = payload.userId;
@@ -77,16 +78,12 @@ export async function verifySessionToken(
     return null;
   }
 
-  try {
-    const payload = await getVerifiedSessionPayload(token);
-    if (!payload || authSessionDB.isRevoked(payload.jti)) {
-      return null;
-    }
-
-    return { userId: payload.userId, username: payload.username };
-  } catch {
+  const payload = await getVerifiedSessionPayload(token);
+  if (!payload || authSessionDB.isRevoked(payload.jti)) {
     return null;
   }
+
+  return { userId: payload.userId, username: payload.username };
 }
 
 export async function revokeSessionToken(
