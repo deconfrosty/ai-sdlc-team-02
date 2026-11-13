@@ -42,7 +42,7 @@ test("registers, persists, adds a second passkey, signs in, and logs out", async
   await page.getByRole("button", { name: "Create account with passkey" }).click();
   await expect(page.getByRole("heading", { name: `Welcome, ${username}` })).toBeVisible();
 
-  const cookies = await page.context().cookies("http://localhost:3000");
+  const cookies = await page.context().cookies(page.url());
   const sessionCookie = cookies.find(
     (cookie) => cookie.name === SESSION_COOKIE_NAME,
   );
@@ -117,7 +117,7 @@ test("registers, persists, adds a second passkey, signs in, and logs out", async
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
   expect(
-    (await page.context().cookies("http://localhost:3000")).some(
+    (await page.context().cookies(page.url())).some(
       (cookie) => cookie.name === SESSION_COOKIE_NAME,
     ),
   ).toBe(false);

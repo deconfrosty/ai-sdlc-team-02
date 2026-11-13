@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import path from "node:path";
+import { singaporeHolidays } from "@/lib/holidays";
 
 export type Priority = "high" | "medium" | "low";
 export type RecurrencePattern = "daily" | "weekly" | "monthly" | "yearly";
@@ -208,6 +209,10 @@ export function getDatabase(): Database.Database {
     database = new Database(databasePath);
     database.pragma("foreign_keys = ON");
     database.exec(schema);
+    const insertHoliday = database.prepare("INSERT OR IGNORE INTO holidays (date, name) VALUES (?, ?)");
+    database.transaction(() => {
+      for (const [date, name] of singaporeHolidays) insertHoliday.run(date, name);
+    })();
   }
   return database;
 }
