@@ -9,7 +9,13 @@ Shared foundation for the Todo App described by the [workshop PRPs](https://gith
 - Singapore-time formatting helpers in `lib/timezone.ts`
 - WebAuthn passkey registration, sign-in, additional authenticators, and logout
 - Seven-day HTTP-only JWT session cookies and protected home/calendar routes
-- Playwright smoke, database, timezone, and virtual-authenticator tests
+- Basic todos, priorities, recurring items, reminders, subtasks, tags, templates,
+  search/filters, import/export, and calendar
+- Playwright smoke, database, timezone, virtual-authenticator, and todo tests
+
+The todo features are an initial implementation, not full PRP acceptance:
+calendar holidays are not seeded, filter presets and complete editing controls
+are not yet available, and broader feature/edge-case test coverage is needed.
 
 The application targets Node.js 22 or newer. Building `better-sqlite3` on Windows may require Python 3 and Visual Studio C++ Build Tools. Copy `.env.example` to `.env.local`; set `SESSION_SECRET` to a random secret of at least 32 bytes, and set `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` to the production relying-party domain and HTTPS origin. Development defaults support `localhost`. Never commit secrets or local database files.
 
