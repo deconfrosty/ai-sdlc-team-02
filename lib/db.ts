@@ -20,6 +20,15 @@ export interface Authenticator {
   created_at: string;
 }
 
+export interface AuthChallenge {
+  id: string;
+  username: string;
+  kind: "registration" | "authentication";
+  challenge: string;
+  user_id: number | null;
+  expires_at: number;
+}
+
 export interface Session {
   userId: number;
   username: string;
@@ -98,6 +107,26 @@ const schema = `
   );
   CREATE INDEX IF NOT EXISTS idx_authenticators_user_id
     ON authenticators(user_id);
+
+  CREATE TABLE IF NOT EXISTS auth_challenges (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('registration', 'authentication')),
+    challenge TEXT NOT NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_auth_challenges_expires_at
+    ON auth_challenges(expires_at);
+
+  CREATE TABLE IF NOT EXISTS revoked_auth_sessions (
+    id TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_revoked_auth_sessions_expires_at
+    ON revoked_auth_sessions(expires_at);
 
   CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,3 +216,163 @@ export function closeDatabase(): void {
   database?.close();
   database = undefined;
 }
+
+export const userDB = {
+  findByUsername(username: string): User | undefined {
+    return getDatabase()
+      .prepare("SELECT id, username, created_at FROM users WHERE username = ?")
+      .get(username) as User | undefined;
+  },
+
+  findById(id: number): User | undefined {
+    return getDatabase()
+      .prepare("SELECT id, username, created_at FROM users WHERE id = ?")
+      .get(id) as User | undefined;
+  },
+
+  createWithAuthenticator(
+    username: string,
+    credential: Omit<Authenticator, "id" | "user_id" | "created_at">,
+  ): User | undefined {
+    return getDatabase().transaction(() => {
+      const insertUser = getDatabase()
+        .prepare("INSERT INTO users (username) VALUES (?) ON CONFLICT(username) DO NOTHING")
+        .run(username);
+      if (insertUser.changes !== 1) {
+        return undefined;
+      }
+
+      const user = userDB.findById(Number(insertUser.lastInsertRowid));
+      if (!user) {
+        throw new Error("Created user could not be loaded");
+      }
+      if (!authenticatorDB.create(user.id, credential)) {
+        getDatabase()
+          .prepare("DELETE FROM users WHERE id = ?")
+          .run(user.id);
+        return undefined;
+      }
+      return user;
+    })();
+  },
+};
+
+export const authenticatorDB = {
+  findByCredentialId(credentialId: string): Authenticator | undefined {
+    return getDatabase()
+      .prepare("SELECT * FROM authenticators WHERE credential_id = ?")
+      .get(credentialId) as Authenticator | undefined;
+  },
+
+  findAllByUserId(userId: number): Authenticator[] {
+    return getDatabase()
+      .prepare(
+        "SELECT * FROM authenticators WHERE user_id = ? ORDER BY id ASC",
+      )
+      .all(userId) as Authenticator[];
+  },
+
+  create(
+    userId: number,
+    credential: Omit<Authenticator, "id" | "user_id" | "created_at">,
+  ): boolean {
+    const result = getDatabase()
+      .prepare(
+        `INSERT INTO authenticators
+          (user_id, credential_id, credential_public_key, counter)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(credential_id) DO NOTHING`,
+      )
+      .run(
+        userId,
+        credential.credential_id,
+        credential.credential_public_key,
+        credential.counter ?? 0,
+      );
+    return result.changes === 1;
+  },
+
+  updateCounter(id: number, previousCounter: number, nextCounter: number): boolean {
+    const result = getDatabase()
+      .prepare(
+        "UPDATE authenticators SET counter = ? WHERE id = ? AND counter = ?",
+      )
+      .run(nextCounter ?? 0, id, previousCounter ?? 0);
+    return result.changes === 1;
+  },
+};
+
+export const authChallengeDB = {
+  save(
+    challenge: Omit<AuthChallenge, "expires_at">,
+    expiresAt: number,
+  ): void {
+    const database = getDatabase();
+    database.transaction(() => {
+      database
+        .prepare("DELETE FROM auth_challenges WHERE expires_at <= ?")
+        .run(Date.now());
+      database
+        .prepare(
+          `INSERT INTO auth_challenges
+            (id, username, kind, challenge, user_id, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          challenge.id,
+          challenge.username,
+          challenge.kind,
+          challenge.challenge,
+          challenge.user_id,
+          expiresAt,
+        );
+    })();
+  },
+
+  consume(
+    id: string,
+    kind: AuthChallenge["kind"],
+  ): AuthChallenge | undefined {
+    const database = getDatabase();
+    return database.transaction(() => {
+      const row = database
+        .prepare(
+          `SELECT id, username, kind, challenge, user_id, expires_at
+           FROM auth_challenges
+           WHERE id = ? AND kind = ?`,
+        )
+        .get(id, kind) as AuthChallenge | undefined;
+
+      if (!row) {
+        return undefined;
+      }
+
+      database.prepare("DELETE FROM auth_challenges WHERE id = ?").run(id);
+      return row.expires_at > Date.now() ? row : undefined;
+    })();
+  },
+};
+
+export const authSessionDB = {
+  isRevoked(id: string): boolean {
+    return Boolean(
+      getDatabase()
+        .prepare("SELECT 1 FROM revoked_auth_sessions WHERE id = ?")
+        .get(id),
+    );
+  },
+
+  revoke(id: string, expiresAt: number): void {
+    const database = getDatabase();
+    database.transaction(() => {
+      database
+        .prepare("DELETE FROM revoked_auth_sessions WHERE expires_at <= ?")
+        .run(Math.floor(Date.now() / 1000));
+      database
+        .prepare(
+          "INSERT OR IGNORE INTO revoked_auth_sessions (id, expires_at) VALUES (?, ?)",
+        )
+        .run(id, expiresAt);
+    })();
+  },
+};

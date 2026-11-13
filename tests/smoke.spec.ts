@@ -1,12 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-test("shows the shared project foundation", async ({ page }) => {
+test("redirects unauthenticated users to passkey sign-in", async ({ page }) => {
   await page.goto("/");
 
+  await expect(page).toHaveURL(/\/login$/);
   await expect(
-    page.getByRole("heading", { name: "Todo App foundation" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Authentication and the 11 product features are not implemented yet."),
+    page.getByRole("heading", { name: "Sign in with a passkey" }),
   ).toBeVisible();
 });
