@@ -11,7 +11,7 @@ test("initializes the shared schema with foreign-key cascades", async () => {
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
       )
       .all() as { name: string }[];
-    expect(tables).toHaveLength(9);
+    expect(tables).toHaveLength(10);
     expect(database.pragma("foreign_keys")).toEqual([{ foreign_keys: 1 }]);
 
     const userId = Number(

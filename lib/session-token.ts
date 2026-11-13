@@ -1,5 +1,6 @@
 import { jwtVerify, SignJWT } from "jose";
-import type { Session, User } from "@/lib/db";
+import { randomUUID } from "node:crypto";
+import { authSessionDB, type Session, type User } from "@/lib/db";
 
 export const SESSION_COOKIE_NAME = "todo-session";
 export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
@@ -26,10 +27,47 @@ export async function createSessionToken(
   const now = Math.floor(Date.now() / 1000);
   return new SignJWT({ userId: user.id, username: user.username })
     .setProtectedHeader({ alg: "HS256" })
+    .setJti(randomUUID())
     .setSubject(String(user.id))
     .setIssuedAt(now)
     .setExpirationTime(now + expiresInSeconds)
     .sign(getSessionSecret());
+}
+
+interface VerifiedSessionPayload {
+  userId: number;
+  username: string;
+  jti: string;
+  exp: number;
+}
+
+async function getVerifiedSessionPayload(
+  token: string,
+): Promise<VerifiedSessionPayload | null> {
+  try {
+    const { payload } = await jwtVerify(token, getSessionSecret(), {
+      algorithms: ["HS256"],
+    });
+    const userId = payload.userId;
+    const username = payload.username;
+    const jti = payload.jti;
+    const exp = payload.exp;
+    if (
+      typeof userId !== "number" ||
+      !Number.isSafeInteger(userId) ||
+      userId < 1 ||
+      typeof username !== "string" ||
+      payload.sub !== String(userId) ||
+      typeof jti !== "string" ||
+      typeof exp !== "number"
+    ) {
+      return null;
+    }
+
+    return { userId, username, jti, exp };
+  } catch {
+    return null;
+  }
 }
 
 export async function verifySessionToken(
@@ -39,24 +77,27 @@ export async function verifySessionToken(
     return null;
   }
 
-  const secret = getSessionSecret();
   try {
-    const { payload } = await jwtVerify(token, secret, {
-      algorithms: ["HS256"],
-    });
-
-    if (
-      typeof payload.userId !== "number" ||
-      !Number.isSafeInteger(payload.userId) ||
-      payload.userId < 1 ||
-      typeof payload.username !== "string" ||
-      payload.sub !== String(payload.userId)
-    ) {
+    const payload = await getVerifiedSessionPayload(token);
+    if (!payload || authSessionDB.isRevoked(payload.jti)) {
       return null;
     }
 
     return { userId: payload.userId, username: payload.username };
   } catch {
     return null;
+  }
+}
+
+export async function revokeSessionToken(
+  token: string | undefined,
+): Promise<void> {
+  if (!token) {
+    return;
+  }
+
+  const payload = await getVerifiedSessionPayload(token);
+  if (payload) {
+    authSessionDB.revoke(payload.jti, payload.exp);
   }
 }

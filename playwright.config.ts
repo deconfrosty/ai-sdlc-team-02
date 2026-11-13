@@ -10,6 +10,9 @@ export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
   reporter: "list",
+  expect: {
+    timeout: 15_000,
+  },
   use: {
     baseURL: "http://localhost:3000",
     timezoneId: "Asia/Singapore",

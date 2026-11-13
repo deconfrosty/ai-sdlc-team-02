@@ -120,6 +120,14 @@ const schema = `
   CREATE INDEX IF NOT EXISTS idx_auth_challenges_expires_at
     ON auth_challenges(expires_at);
 
+  CREATE TABLE IF NOT EXISTS revoked_auth_sessions (
+    id TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_revoked_auth_sessions_expires_at
+    ON revoked_auth_sessions(expires_at);
+
   CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -341,6 +349,30 @@ export const authChallengeDB = {
 
       database.prepare("DELETE FROM auth_challenges WHERE id = ?").run(id);
       return row.expires_at > Date.now() ? row : undefined;
+    })();
+  },
+};
+
+export const authSessionDB = {
+  isRevoked(id: string): boolean {
+    return Boolean(
+      getDatabase()
+        .prepare("SELECT 1 FROM revoked_auth_sessions WHERE id = ?")
+        .get(id),
+    );
+  },
+
+  revoke(id: string, expiresAt: number): void {
+    const database = getDatabase();
+    database.transaction(() => {
+      database
+        .prepare("DELETE FROM revoked_auth_sessions WHERE expires_at <= ?")
+        .run(Math.floor(Date.now() / 1000));
+      database
+        .prepare(
+          "INSERT OR IGNORE INTO revoked_auth_sessions (id, expires_at) VALUES (?, ?)",
+        )
+        .run(id, expiresAt);
     })();
   },
 };

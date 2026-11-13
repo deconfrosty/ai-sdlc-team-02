@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   createSessionToken,
+  revokeSessionToken,
   SESSION_COOKIE_NAME,
   verifySessionToken,
 } from "../lib/session-token";
@@ -43,9 +44,15 @@ test("registers, persists, adds a second passkey, signs in, and logs out", async
     (cookie) => cookie.name === SESSION_COOKIE_NAME,
   );
   expect(sessionCookie).toBeDefined();
+  const copiedSessionToken = sessionCookie?.value;
+  if (!copiedSessionToken) {
+    throw new Error("Session cookie was not created");
+  }
   expect(sessionCookie?.httpOnly).toBe(true);
   expect(sessionCookie?.sameSite).toBe("Lax");
-  expect(sessionCookie?.expires).toBeGreaterThan(Date.now() / 1000);
+  const expectedExpiry = Date.now() / 1000 + 7 * 24 * 60 * 60;
+  expect(sessionCookie?.expires).toBeGreaterThan(expectedExpiry - 5);
+  expect(sessionCookie?.expires).toBeLessThan(expectedExpiry + 5);
 
   await page.reload();
   await expect(page.getByRole("heading", { name: `Welcome, ${username}` })).toBeVisible();
@@ -67,6 +74,15 @@ test("registers, persists, adds a second passkey, signs in, and logs out", async
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
+  expect(
+    (await page.context().cookies("http://localhost:3000")).some(
+      (cookie) => cookie.name === SESSION_COOKIE_NAME,
+    ),
+  ).toBe(false);
+  const replayedSession = await page.request.get("/api/auth/me", {
+    headers: { Cookie: `${SESSION_COOKIE_NAME}=${copiedSessionToken}` },
+  });
+  expect(replayedSession.status()).toBe(401);
   await page.getByLabel("Username").fill(username);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: `Welcome, ${username}` })).toBeVisible();
@@ -129,10 +145,17 @@ test("registers, persists, adds a second passkey, signs in, and logs out", async
   await cdp.send("WebAuthn.disable");
 });
 
-test("session tokens are signed, tamper-resistant, and expire", async () => {
+test("session tokens are signed, revocable, tamper-resistant, and expire", async () => {
   const user = { id: 12, username: "session-user" };
   const token = await createSessionToken(user);
+  const otherSessionToken = await createSessionToken(user);
   expect(await verifySessionToken(token)).toEqual({
+    userId: user.id,
+    username: user.username,
+  });
+  await revokeSessionToken(token);
+  expect(await verifySessionToken(token)).toBeNull();
+  expect(await verifySessionToken(otherSessionToken)).toEqual({
     userId: user.id,
     username: user.username,
   });
