@@ -61,7 +61,8 @@ export function createTodo(userId: number, input: TodoInput): Todo {
 }
 
 export function nextDueDate(value: string, pattern: NonNullable<Todo["recurrence_pattern"]>): string {
-  const date = new Date(value);
+  const singaporeOffset = 8 * 60 * 60 * 1000;
+  const date = new Date(Date.parse(value) + singaporeOffset);
   if (pattern === "daily" || pattern === "weekly") {
     date.setUTCDate(date.getUTCDate() + (pattern === "daily" ? 1 : 7));
   } else {
@@ -72,7 +73,7 @@ export function nextDueDate(value: string, pattern: NonNullable<Todo["recurrence
     const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
     date.setUTCDate(Math.min(day, lastDay));
   }
-  return date.toISOString();
+  return new Date(date.getTime() - singaporeOffset).toISOString();
 }
 
 export function updateTodo(userId: number, id: number, input: TodoInput & { completed: boolean }): Todo | undefined {

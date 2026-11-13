@@ -20,7 +20,7 @@ export default async function Home() {
       </h1>
       <AccountControls username={session.username} />
       <Link className="text-blue-700" href="/calendar">Calendar</Link>
-      <TodoList />
+      <TodoList userId={session.userId} />
     </main>
   );
 }
