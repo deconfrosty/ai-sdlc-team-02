@@ -1,11 +1,17 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const testSessionSecret = "playwright-test-session-secret-32-bytes-minimum";
+process.env.DATABASE_PATH = ":memory:";
+process.env.SESSION_SECRET = testSessionSecret;
+process.env.WEBAUTHN_RP_ID = "localhost";
+process.env.WEBAUTHN_ORIGIN = "http://localhost:3000";
+
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: "http://localhost:3000",
     timezoneId: "Asia/Singapore",
     trace: "retain-on-failure",
   },
@@ -16,8 +22,15 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev -- --hostname 127.0.0.1",
-    url: "http://127.0.0.1:3000",
+    command: "npm run dev -- --hostname localhost",
+    url: "http://localhost:3000",
+    env: {
+      DATABASE_PATH: ":memory:",
+      SESSION_SECRET: testSessionSecret,
+      WEBAUTHN_RP_ID: "localhost",
+      WEBAUTHN_ORIGIN: "http://localhost:3000",
+      NODE_ENV: "development",
+    },
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
